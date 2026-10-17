@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Onluyen Auto Solver (v14.2)
+// @name         Onluyen Auto Solver (v15.0)
 // @namespace    https://github.com/thanhngucomvn999/ONLUYEN_BOT
-// @version      14.2.0
-// @description  Nhận diện loại câu hỏi & Tự động giải
+// @version      15.0.0
+// @description  Visual UI Scraper - Fix lỗi không tìm thấy dữ liệu
 // @match        https://*.onluyen.vn/*
 // @grant        none
 // @run-at       document-idle
@@ -17,61 +17,58 @@
         DELAY: 2500
     };
 
-    // [NHÚNG EXTRACTOR]
+    // [NHÚNG EXTRACTOR V15]
     const Extractor = {
         getQuestionData() {
-            let radios = Array.from(document.querySelectorAll('input[type="radio"]'));
-            let textInputs = Array.from(document.querySelectorAll('input[type="text"], textarea'))
-                .filter(el => !el.classList.contains('search-input') && el.offsetParent !== null);
-            
-            let type = 'unknown', container = null, targetNode = null;
-            if (radios.length > 0) { type = 'multiple_choice'; container = radios[0].parentElement; targetNode = radios[radios.length - 1]; }
-            else if (textInputs.length > 0) { type = 'short_answer'; container = textInputs[0].parentElement; targetNode = textInputs[0]; }
-            if (!container) return null;
+            const allEls = Array.from(document.querySelectorAll('div, span, p, label'));
+            const letterBoxes = allEls.filter(el => {
+                const txt = el.textContent.trim().toUpperCase();
+                return ['A', 'B', 'C', 'D'].includes(txt) && el.children.length === 0;
+            });
 
-            while (container && container !== document.body) {
-                if (container.contains(targetNode) && container.textContent.length > 50) break;
-                container = container.parentElement;
+            if (letterBoxes.length === 0) return null;
+
+            const options = [];
+            letterBoxes.forEach(box => {
+                const letter = box.textContent.trim().toUpperCase();
+                if (options.some(o => o.letter === letter)) return;
+
+                let row = box.parentElement;
+                for (let i = 0; i < 3; i++) {
+                    if (!row || row === document.body) break;
+                    if (row.innerText.trim().length > letter.length + 2) break;
+                    row = row.parentElement;
+                }
+
+                if (row && row !== document.body) {
+                    let text = row.innerText.trim()
+                        .replace(/Đáp án của bạn/gi, '')
+                        .replace(/^[A-D][\.\s]*/i, '')
+                        .trim();
+                    options.push({ letter: letter, text: text, element: row });
+                }
+            });
+
+            options.sort((a, b) => a.letter.localeCompare(b.letter));
+            if (options.length < 2) return null;
+
+            let questionText = "";
+            let parent = options[0].element.parentElement;
+            while (parent && parent !== document.body) {
+                const rawText = parent.innerText;
+                if (rawText.includes(options[0].text)) {
+                    let splitText = rawText.split(options[0].text)[0];
+                    splitText = splitText.replace(/Câu\s+\d+.*/i, '').replace(/#\d+/g, '').replace(/Báo lỗi/gi, '').replace(/\n{2,}/g, '\n').trim();
+                    if (splitText.length > 10) { questionText = splitText; break; }
+                }
+                parent = parent.parentElement;
             }
-            if (!container || container === document.body) return null;
 
-            let options = [];
-            let rawText = container.innerText || container.textContent;
-            rawText = rawText.replace(/Câu:\s*\d+/gi, '').replace(/#\d+/g, '').replace(/Báo lỗi/gi, '');
-
-            if (type === 'multiple_choice') {
-                radios.forEach((radio, index) => {
-                    const letter = String.fromCharCode(65 + index);
-                    let label = radio.closest('label') || radio.parentElement;
-                    if (label.innerText.length < 3) label = label.parentElement;
-                    let text = label.innerText.replace(new RegExp('^' + letter + '[\\.\\s]*', 'i'), '').replace(/Đáp án của bạn/gi, '').trim();
-                    options.push({ letter: letter, text: text || ('Đáp án ' + letter), element: label });
-                });
-            }
-
-            let questionText = rawText;
-            options.forEach(opt => { questionText = questionText.replace(opt.text, ''); });
-            questionText = questionText.replace(/Đáp án của bạn/gi, '').replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
-
-            return { type: type, questionText: questionText || rawText, options: options, radios: radios, textInputs: textInputs };
+            return { type: 'multiple_choice', questionText: questionText || "Không đọc được câu hỏi", options: options, radios: options.map(o => o.element) };
         },
         clickAnswer(letter, dataOptions) {
             const target = dataOptions.find(o => o.letter === letter);
-            if (target) {
-                const radio = target.element.querySelector('input[type="radio"]');
-                if (radio) radio.click(); else target.element.click();
-                return true;
-            }
-            return false;
-        },
-        fillShortAnswer(answerText, textInputs) {
-            if (textInputs && textInputs.length > 0) {
-                let input = textInputs[0];
-                input.value = answerText;
-                input.dispatchEvent(new Event('input', { bubbles: true }));
-                input.dispatchEvent(new Event('change', { bubbles: true }));
-                return true;
-            }
+            if (target) { target.element.click(); return true; }
             return false;
         },
         clickNext() {
@@ -86,15 +83,12 @@
 
     // [API CLIENT]
     const ApiClient = {
-        async askAI(questionText, options, type) {
+        async askAI(questionText, options) {
             let prompt = "Bạn là chuyên gia giải bài tập. Đây là câu hỏi:\n" + questionText + "\n";
-            
-            if (type === 'multiple_choice' && options.length > 0) {
+            if (options && options.length > 0) {
                 prompt += "Các đáp án:\n" + options.map(o => o.letter + ". " + o.text).join('\n') + "\n";
-                prompt += "YÊU CẦU: Chỉ trả về 1 chữ cái duy nhất (A, B, C hoặc D). Không giải thích.";
-            } else if (type === 'short_answer') {
-                prompt += "YÊU CẦU: Hãy tính toán và trả về kết quả ngắn gọn (chỉ trả về số hoặc chữ, không kèm đơn vị, không giải thích).";
             }
+            prompt += "YÊU CẦU: Chỉ trả về 1 chữ cái duy nhất (A, B, C hoặc D). Không giải thích.";
 
             let url = CONFIG.GATEWAY === 'openai' ? 'https://api.openai.com/v1/chat/completions' : 'https://gen.pollinations.ai/v1/chat/completions';
             let headers = { 'Content-Type': 'application/json' };
@@ -109,7 +103,9 @@
             });
             if (!res.ok) throw new Error('HTTP ' + res.status);
             const json = await res.json();
-            return json?.choices?.[0]?.message?.content?.trim() || '';
+            const text = json?.choices?.[0]?.message?.content?.trim() || '';
+            const match = text.match(/\b([A-D])\b/i) || text.match(/^([A-D])/i);
+            return match ? match[0].toUpperCase() : 'A';
         }
     };
 
@@ -124,27 +120,19 @@
 
                 if (!data) { updateStatus('❌ Không tìm thấy câu hỏi!', 'error'); return false; }
 
-                updateStatus('🧠 AI đang giải (' + data.type + ')...');
-                const answerText = await ApiClient.askAI(data.questionText, data.options, data.type);
+                updateStatus('🧠 AI đang giải...');
+                const answerLetter = await ApiClient.askAI(data.questionText, data.options);
                 
-                if (data.type === 'multiple_choice') {
-                    const match = answerText.match(/\b([A-D])\b/i) || answerText.match(/^([A-D])/i);
-                    const letter = match ? match[0].toUpperCase() : 'A';
-                    const selected = data.options.find(o => o.letter === letter);
-                    const optText = selected ? selected.text : '';
-                    
-                    updateStatus('🖱 Chọn ' + letter + ': ' + (optText.length > 20 ? optText.substring(0, 20) + '...' : optText));
-                    const success = Extractor.clickAnswer(letter, data.options);
-                    
-                    if (success) updateStatus('✅ Đã chọn ' + letter + ' (' + (optText.length > 15 ? optText.substring(0, 15) + '...' : optText) + ')', 'success');
-                    else updateStatus('⚠️ Lỗi click đáp án!', 'error');
-                } 
-                else if (data.type === 'short_answer') {
-                    updateStatus('⌨️ Điền đáp án: ' + answerText);
-                    const success = Extractor.fillShortAnswer(answerText, data.textInputs);
-                    
-                    if (success) updateStatus('✅ Đã điền: ' + answerText, 'success');
-                    else updateStatus('⚠️ Lỗi điền đáp án!', 'error');
+                const selectedOption = data.options.find(o => o.letter === answerLetter);
+                const answerText = selectedOption ? selectedOption.text : '';
+
+                updateStatus('🖱 Chọn ' + answerLetter + ': ' + (answerText.length > 20 ? answerText.substring(0, 20) + '...' : answerText));
+                const success = Extractor.clickAnswer(answerLetter, data.options);
+                
+                if (success) {
+                    updateStatus('✅ Đã chọn ' + answerLetter + ' (' + (answerText.length > 15 ? answerText.substring(0, 15) + '...' : answerText) + ')', 'success');
+                } else {
+                    updateStatus('⚠️ Lỗi click!', 'error');
                 }
 
                 setTimeout(() => {
@@ -186,7 +174,7 @@
         panel.style.cssText = 'position:fixed; bottom:20px; right:20px; width:330px; background:#2c3e50; color:white; border-radius:8px; box-shadow:0 5px 20px rgba(0,0,0,0.4); font-family:sans-serif; z-index:999999; overflow:hidden;';
         
         panel.innerHTML = [
-            '<div style="padding:10px; background:#34495e; font-weight:bold; cursor:move; user-select:none;" id="hw-drag">🤖 AI Solver v14.2</div>',
+            '<div style="padding:10px; background:#34495e; font-weight:bold; cursor:move; user-select:none;" id="hw-drag">🤖 AI Solver v15.0</div>',
             '<div style="padding:15px;">',
             '    <div id="hw-status" style="font-size:13px; margin-bottom:10px; padding:8px; background:rgba(0,0,0,0.2); border-left:4px solid #3498db; word-wrap:break-word;">Status: Ready</div>',
             '    <button id="hw-start" style="width:100%; padding:10px; margin-bottom:8px; background:#27ae60; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:bold;">▶ Start Auto</button>',
@@ -233,13 +221,10 @@
             
             if (!data) { updateStatus('❌ Không tìm thấy dữ liệu!', 'error'); return; }
             
-            let msg = '✅ LOẠI: ' + data.type.toUpperCase() + '\n';
+            let msg = '✅ ĐỌC THÀNH CÔNG!\n';
             msg += 'Câu hỏi: ' + data.questionText.substring(0, 30) + '...\n';
-            if (data.type === 'multiple_choice') {
-                data.options.forEach(o => { msg += '  ' + o.letter + '. ' + o.text.substring(0, 15) + '...\n'; });
-            } else {
-                msg += '  (Ô điền đáp án đã sẵn sàng)';
-            }
+            msg += 'Đáp án tìm thấy:\n';
+            data.options.forEach(o => { msg += '  ' + o.letter + '. ' + o.text.substring(0, 15) + '...\n'; });
             
             statusEl.innerText = msg;
             statusEl.style.whiteSpace = 'pre-wrap';
