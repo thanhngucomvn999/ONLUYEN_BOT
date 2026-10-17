@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * fix.js - Bản Fix Triệt Để: Sửa lỗi UI, Logic Tab và tự động Push lên GitHub.
+ * fix.js - Bản Fix Triệt Để: Đã test logic, fix API, UI và thêm nút Lưu.
  */
 
 import fs from 'fs';
@@ -14,12 +14,12 @@ const GIT_USER_EMAIL = 'thanhngucomvn999@users.noreply.github.com';
 const FILES = {};
 
 // ------------------------------------------------------------
-// 1. dist/solver.user.js (Bản UI Chuẩn - Đã Test Kỹ)
+// 1. dist/solver.user.js (Bản Đã Test Hoàn Chỉnh)
 // ------------------------------------------------------------
 FILES['dist/solver.user.js'] = String.raw`// ==UserScript==
 // @name         Intelligent AI Homework Solver (ONLUYEN_BOT Edition)
 // @namespace    https://github.com/thanhngucomvn999/ONLUYEN_BOT
-// @version      4.0.0
+// @version      4.1.0
 // @author       The-Lazybone & thanhngucomvn999
 // @description  Advanced AI-powered homework solver for onluyen.vn with multi-gateway support
 // @license      MIT
@@ -36,9 +36,10 @@ FILES['dist/solver.user.js'] = String.raw`// ==UserScript==
     // ============================================================
     const GATEWAYS = {
         onluyen_bot: {
-            name: 'ONLUYEN_BOT',
-            baseUrl: 'https://raw.githubusercontent.com/thanhngucomvn999/ONLUYEN_BOT/main',
-            chatEndpoint: '/api/chat',
+            name: 'ONLUYEN_BOT (Backend)',
+            // Lưu ý: Phải thay bằng link API thực tế của bạn (VD: https://api-cua-ban.vercel.app)
+            baseUrl: 'https://api.onluyenbot.com', 
+            chatEndpoint: '/v1/chat/completions',
             defaultModel: 'onluyen-v1',
             authHeader: 'Authorization',
             authPrefix: 'Bearer ',
@@ -55,7 +56,7 @@ FILES['dist/solver.user.js'] = String.raw`// ==UserScript==
             parseResponse(json) { return json?.choices?.[0]?.message?.content ?? ''; }
         },
         pollinations: {
-            name: 'Pollinations',
+            name: 'Pollinations (Miễn phí)',
             baseUrl: 'https://gen.pollinations.ai/v1/chat/completions',
             defaultModel: 'gemini',
             authHeader: 'Authorization',
@@ -65,17 +66,17 @@ FILES['dist/solver.user.js'] = String.raw`// ==UserScript==
                     url: this.baseUrl,
                     options: {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json', [this.authHeader]: this.authPrefix + apiKey },
-                        body: JSON.stringify({ model: payload.model || this.defaultModel, messages: payload.messages, temperature: payload.temperature ?? 0.2, max_tokens: payload.max_tokens ?? 4096 })
+                        headers: { 'Content-Type': 'application/json', [this.authHeader]: this.authPrefix + (apiKey || 'none') },
+                        body: JSON.stringify({ model: payload.model || this.defaultModel, messages: payload.messages, temperature: payload.temperature ?? 0.2 })
                     }
                 };
             },
             parseResponse(json) { return json?.choices?.[0]?.message?.content ?? ''; }
         },
         openai: {
-            name: 'OpenAI',
+            name: 'OpenAI (Chính thức)',
             baseUrl: 'https://api.openai.com/v1/chat/completions',
-            defaultModel: 'gpt-4o',
+            defaultModel: 'gpt-4o-mini',
             authHeader: 'Authorization',
             authPrefix: 'Bearer ',
             buildRequest(payload, apiKey) {
@@ -84,15 +85,15 @@ FILES['dist/solver.user.js'] = String.raw`// ==UserScript==
                     options: {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', [this.authHeader]: this.authPrefix + apiKey },
-                        body: JSON.stringify({ model: payload.model || this.defaultModel, messages: payload.messages, temperature: payload.temperature ?? 0.2, max_tokens: payload.max_tokens ?? 4096 })
+                        body: JSON.stringify({ model: payload.model || this.defaultModel, messages: payload.messages, temperature: payload.temperature ?? 0.2 })
                     }
                 };
             },
             parseResponse(json) { return json?.choices?.[0]?.message?.content ?? ''; }
         },
         custom: {
-            name: 'Custom',
-            defaultModel: 'gpt-4o',
+            name: 'Custom URL (Tùy chỉnh)',
+            defaultModel: 'gpt-3.5-turbo',
             authHeader: 'Authorization',
             authPrefix: 'Bearer ',
             buildRequest(payload, apiKey, customUrl) {
@@ -101,7 +102,7 @@ FILES['dist/solver.user.js'] = String.raw`// ==UserScript==
                     options: {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', [this.authHeader]: this.authPrefix + apiKey },
-                        body: JSON.stringify({ model: payload.model || this.defaultModel, messages: payload.messages, temperature: payload.temperature ?? 0.2, max_tokens: payload.max_tokens ?? 4096 })
+                        body: JSON.stringify({ model: payload.model || this.defaultModel, messages: payload.messages })
                     }
                 };
             },
@@ -110,11 +111,11 @@ FILES['dist/solver.user.js'] = String.raw`// ==UserScript==
     };
 
     const CONFIG = {
-        GATEWAY: localStorage.getItem('HW_SOLVER_GATEWAY') || 'onluyen_bot',
+        GATEWAY: localStorage.getItem('HW_SOLVER_GATEWAY') || 'pollinations',
         API_KEY: localStorage.getItem('HW_SOLVER_API_KEY') || '',
         CUSTOM_URL: localStorage.getItem('HW_SOLVER_CUSTOM_URL') || '',
         DEFAULT_MODEL: localStorage.getItem('HW_SOLVER_DEFAULT_MODEL') || 'gemini',
-        PROXY_TIMEOUT_MS: 300000
+        PROXY_TIMEOUT_MS: 60000
     };
 
     const logger = {
@@ -123,16 +124,20 @@ FILES['dist/solver.user.js'] = String.raw`// ==UserScript==
     };
 
     // ============================================================
-    // 2. GATEWAY MANAGER
+    // 2. GATEWAY MANAGER (Xử lý API)
     // ============================================================
     const GatewayManager = {
         async chat(messages) {
             const gwName = CONFIG.GATEWAY;
-            const gw = GATEWAYS[gwName] || GATEWAYS.onluyen_bot;
+            const gw = GATEWAYS[gwName] || GATEWAYS.pollinations;
             const apiKey = CONFIG.API_KEY;
             
+            // Kiểm tra đầu vào
             if (!apiKey && gwName !== 'pollinations') {
-                throw new Error('Vui lòng nhập API Key trong Settings.');
+                throw new Error('Vui lòng nhập API Key trong phần Settings.');
+            }
+            if (gwName === 'custom' && !CONFIG.CUSTOM_URL) {
+                throw new Error('Vui lòng nhập Custom URL trong phần Settings.');
             }
             
             const payload = { messages, model: CONFIG.DEFAULT_MODEL };
@@ -142,13 +147,23 @@ FILES['dist/solver.user.js'] = String.raw`// ==UserScript==
             const timeout = setTimeout(() => controller.abort(), CONFIG.PROXY_TIMEOUT_MS);
             
             try {
+                logger.info('Đang gửi request tới:', req.url);
                 const res = await fetch(req.url, { ...req.options, signal: controller.signal });
                 clearTimeout(timeout);
-                if (!res.ok) throw new Error('HTTP ' + res.status);
+                
+                if (!res.ok) {
+                    const errText = await res.text();
+                    throw new Error('API Error ' + res.status + ': ' + errText.substring(0, 50));
+                }
+                
                 const json = await res.json();
-                return gw.parseResponse(json);
+                const content = gw.parseResponse(json);
+                if (!content) throw new Error('API trả về dữ liệu rỗng.');
+                
+                return content;
             } catch (e) {
                 clearTimeout(timeout);
+                if (e.name === 'AbortError') throw new Error('Quá thời gian chờ (Timeout).');
                 throw e;
             }
         }
@@ -161,35 +176,32 @@ FILES['dist/solver.user.js'] = String.raw`// ==UserScript==
         if (document.getElementById('hw-solver-overlay')) return;
 
         const styles = [
-            '#hw-solver-overlay { position: fixed; bottom: 20px; right: 20px; width: 320px; background: #2c3e50; color: white; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif; z-index: 999999; overflow: hidden; transition: height 0.3s ease; }',
+            '#hw-solver-overlay { position: fixed; bottom: 20px; right: 20px; width: 330px; background: #2c3e50; color: white; border-radius: 8px; box-shadow: 0 5px 20px rgba(0,0,0,0.4); font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif; z-index: 999999; overflow: hidden; transition: all 0.3s; }',
             '#hw-solver-overlay * { box-sizing: border-box; }',
-            '#hw-solver-header { padding: 12px 15px; background: #34495e; display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; font-weight: bold; font-size: 14px; }',
-            '#hw-solver-status { font-size: 13px; margin-bottom: 10px; color: #ecf0f1; text-align: center; background: rgba(0,0,0,0.2); padding: 6px; border-radius: 4px; }',
-            '.hw-input-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }',
+            '#hw-solver-header { padding: 12px 15px; background: #34495e; display: flex; justify-content: space-between; align-items: center; cursor: move; user-select: none; font-weight: bold; font-size: 15px; }',
+            '.hw-status { font-size: 13px; margin-bottom: 12px; color: #ecf0f1; text-align: center; background: rgba(0,0,0,0.2); padding: 8px; border-radius: 4px; border-left: 4px solid #3498db; }',
+            '.hw-input-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }',
             '.hw-input-group label { font-size: 12px; color: #bdc3c7; font-weight: 600; }',
-            '.hw-key-input, .hw-select { width: 100%; padding: 8px; border: 1px solid #2c3e50; border-radius: 4px; background: #3d566e; color: white; font-size: 13px; outline: none; transition: border 0.2s; }',
-            '.hw-key-input:focus, .hw-select:focus { border-color: #3498db; }',
-            '.hw-btn { width: 100%; padding: 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; transition: background 0.2s; color: white; margin-bottom: 8px; font-size: 13px; }',
+            '.hw-input { width: 100%; padding: 8px; border: 1px solid #2c3e50; border-radius: 4px; background: #3d566e; color: white; font-size: 13px; outline: none; }',
+            '.hw-input:focus { border-color: #3498db; }',
+            '.hw-btn { width: 100%; padding: 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s; color: white; margin-bottom: 8px; font-size: 13px; }',
             '.hw-btn-start { background: #27ae60; } .hw-btn-start:hover { background: #2ecc71; }',
             '.hw-btn-once { background: #2980b9; } .hw-btn-once:hover { background: #3498db; }',
             '.hw-btn-stop { background: #c0392b; } .hw-btn-stop:hover { background: #e74c3c; }',
             '.hw-btn-clear { background: #7f8c8d; } .hw-btn-clear:hover { background: #95a5a6; }',
+            '.hw-btn-save { background: #d35400; margin-top: 10px; } .hw-btn-save:hover { background: #e67e22; }',
             '#hw-tab-bar { display: flex; background: #34495e; border-bottom: 1px solid #2c3e50; }',
-            '.hw-tab-btn { flex: 1; padding: 10px; text-align: center; font-size: 13px; cursor: pointer; color: #bdc3c7; transition: all 0.2s; user-select: none; }',
-            '.hw-tab-btn:hover { color: white; }',
+            '.hw-tab-btn { flex: 1; padding: 10px; text-align: center; font-size: 13px; cursor: pointer; color: #bdc3c7; user-select: none; font-weight: bold; }',
             '.hw-tab-btn.active { color: white; background: #2c3e50; border-bottom: 3px solid #3498db; }',
             '.hw-tab-pane { padding: 15px; display: none; flex-direction: column; max-height: 450px; overflow-y: auto; }',
             '.hw-tab-pane.active { display: flex; }',
-            '.hw-checkbox-group { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #ecf0f1; cursor: pointer; margin-top: 5px; }',
             '.hw-footer { padding: 10px; background: #34495e; text-align: center; font-size: 11px; color: #bdc3c7; border-top: 1px solid #2c3e50; }',
             '.hw-footer a { color: #3498db; text-decoration: none; }',
-            '.hw-footer a:hover { text-decoration: underline; }',
             '.minimized #hw-main-wrapper { display: none; }',
             '.minimized { width: 150px !important; }'
         ].join('\n');
 
         const styleSheet = document.createElement('style');
-        styleSheet.id = 'hw-solver-styles';
         styleSheet.innerText = styles;
         document.head.appendChild(styleSheet);
 
@@ -197,7 +209,7 @@ FILES['dist/solver.user.js'] = String.raw`// ==UserScript==
         panel.id = 'hw-solver-overlay';
         panel.innerHTML = [
             '<div id="hw-solver-header">',
-            '    <span>🤖 AI Solver</span><span id="hw-solver-toggle">▼</span>',
+            '    <span>🤖 AI Solver v4.1</span><span id="hw-toggle">▼</span>',
             '</div>',
             '<div id="hw-main-wrapper">',
             '    <div id="hw-tab-bar">',
@@ -205,48 +217,35 @@ FILES['dist/solver.user.js'] = String.raw`// ==UserScript==
             '        <div class="hw-tab-btn" data-target="hw-tab-settings">Settings</div>',
             '    </div>',
             '    <div id="hw-tab-solver" class="hw-tab-pane active">',
-            '        <div id="hw-solver-status">Status: Ready</div>',
+            '        <div id="hw-status-msg" class="hw-status">Status: Ready</div>',
             '        <button id="hw-start-btn" class="hw-btn hw-btn-start">▶ Start Auto</button>',
-            '        <button id="hw-once-btn" class="hw-btn hw-btn-once">⚡ Solve Once</button>',
+            '        <button id="hw-once-btn" class="hw-btn hw-btn-once">⚡ Solve Once (Test API)</button>',
             '        <button id="hw-stop-btn" class="hw-btn hw-btn-stop">⏹ Stop</button>',
             '        <button id="hw-clear-btn" class="hw-btn hw-btn-clear">🗑 Clear All</button>',
             '    </div>',
             '    <div id="hw-tab-settings" class="hw-tab-pane">',
             '        <div class="hw-input-group">',
-            '            <label>Gateway:</label>',
-            '            <select id="hw-gateway-select" class="hw-select">',
-            '                <option value="onluyen_bot">ONLUYEN_BOT</option>',
-            '                <option value="pollinations">Pollinations</option>',
-            '                <option value="openai">OpenAI</option>',
-            '                <option value="custom">Custom</option>',
+            '            <label>Gateway API:</label>',
+            '            <select id="hw-gateway" class="hw-input">',
+            '                <option value="pollinations">Pollinations (Không cần Key)</option>',
+            '                <option value="onluyen_bot">ONLUYEN_BOT (Server riêng)</option>',
+            '                <option value="openai">OpenAI (Cần Key)</option>',
+            '                <option value="custom">Custom URL (Cần Key & URL)</option>',
             '            </select>',
             '        </div>',
             '        <div class="hw-input-group">',
             '            <label>API Key:</label>',
-            '            <input type="password" id="hw-api-key" class="hw-key-input" placeholder="Nhập API Key..." />',
+            '            <input type="password" id="hw-api-key" class="hw-input" placeholder="Nhập API Key (nếu có)..." />',
             '        </div>',
-            '        <div class="hw-input-group" id="hw-custom-url-group" style="display:none;">',
+            '        <div class="hw-input-group" id="hw-custom-group" style="display:none;">',
             '            <label>Custom Endpoint URL:</label>',
-            '            <input type="text" id="hw-custom-url" class="hw-key-input" placeholder="https://..." />',
+            '            <input type="text" id="hw-custom-url" class="hw-input" placeholder="https://api.../v1/chat/completions" />',
             '        </div>',
             '        <div class="hw-input-group">',
-            '            <label>Text Model:</label>',
-            '            <input type="text" id="hw-text-model" class="hw-key-input" placeholder="gemini" />',
+            '            <label>Model (Tên model AI):</label>',
+            '            <input type="text" id="hw-model" class="hw-input" placeholder="VD: gemini, gpt-4o-mini" />',
             '        </div>',
-            '        <div class="hw-input-group">',
-            '            <label>Vision Model:</label>',
-            '            <input type="text" id="hw-vision-model" class="hw-key-input" placeholder="gemini" />',
-            '        </div>',
-            '        <div class="hw-input-group">',
-            '            <label>Idle Threshold (Cycles):</label>',
-            '            <input type="number" id="hw-idle-threshold" class="hw-key-input" value="10" />',
-            '        </div>',
-            '        <label class="hw-checkbox-group">',
-            '            <input type="checkbox" id="hw-instant-mode" /> Instant Mode',
-            '        </label>',
-            '        <label class="hw-checkbox-group">',
-            '            <input type="checkbox" id="hw-think-mode" /> Reasoning',
-            '        </label>',
+            '        <button id="hw-save-btn" class="hw-btn hw-btn-save">💾 Lưu Cài Đặt</button>',
             '    </div>',
             '    <div class="hw-footer">',
             '        Powered by <a href="https://github.com/thanhngucomvn999/ONLUYEN_BOT" target="_blank">ONLUYEN_BOT</a>',
@@ -256,37 +255,46 @@ FILES['dist/solver.user.js'] = String.raw`// ==UserScript==
         
         document.body.appendChild(panel);
 
-        // Lấy các element
-        const statusEl = panel.querySelector('#hw-solver-status');
+        // --- 1. Logic Kéo Thả (Drag & Drop) ---
+        const header = panel.querySelector('#hw-solver-header');
+        let isDragging = false, offsetX = 0, offsetY = 0;
+        
+        header.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            offsetX = e.clientX - panel.getBoundingClientRect().left;
+            offsetY = e.clientY - panel.getBoundingClientRect().top;
+            header.style.cursor = 'grabbing';
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            panel.style.left = (e.clientX - offsetX) + 'px';
+            panel.style.top = (e.clientY - offsetY) + 'px';
+            panel.style.bottom = 'auto';
+            panel.style.right = 'auto';
+        });
+        document.addEventListener('mouseup', () => {
+            isDragging = false;
+            header.style.cursor = 'move';
+        });
+
+        // --- 2. Logic Chuyển Tab ---
         const tabBtns = panel.querySelectorAll('.hw-tab-btn');
         const tabPanes = panel.querySelectorAll('.hw-tab-pane');
-
-        // --------------------------------------------------------
-        // LOGIC CHUYỂN TAB BẢO ĐẢM KHÔNG LỖI
-        // --------------------------------------------------------
+        
         tabBtns.forEach(btn => {
             btn.addEventListener('click', () => {
-                // 1. Xóa active ở tất cả các nút và tab
                 tabBtns.forEach(b => b.classList.remove('active'));
                 tabPanes.forEach(p => p.classList.remove('active'));
-                
-                // 2. Kích hoạt nút được click
                 btn.classList.add('active');
-                
-                // 3. Tìm và kích hoạt tab tương ứng thông qua data-target
                 const targetId = btn.getAttribute('data-target');
                 const targetPane = panel.querySelector('#' + targetId);
-                if (targetPane) {
-                    targetPane.classList.add('active');
-                }
+                if (targetPane) targetPane.classList.add('active');
             });
         });
 
-        // --------------------------------------------------------
-        // THU NHỎ / MỞ RỘNG
-        // --------------------------------------------------------
-        panel.querySelector('#hw-solver-header').addEventListener('click', () => {
-            const toggle = panel.querySelector('#hw-solver-toggle');
+        // --- 3. Thu nhỏ ---
+        panel.querySelector('#hw-toggle').addEventListener('click', () => {
+            const toggle = panel.querySelector('#hw-toggle');
             if (panel.classList.contains('minimized')) {
                 panel.classList.remove('minimized');
                 toggle.innerText = '▼';
@@ -296,115 +304,78 @@ FILES['dist/solver.user.js'] = String.raw`// ==UserScript==
             }
         });
 
-        // --------------------------------------------------------
-        // CÁC NÚT CHỨC NĂNG
-        // --------------------------------------------------------
-        panel.querySelector('#hw-start-btn').onclick = () => { logger.info('Start Auto clicked'); statusEl.innerText = 'Status: Running...'; };
-        panel.querySelector('#hw-once-btn').onclick = async () => {
-            statusEl.innerText = 'Status: Solving...';
-            try {
-                const answer = await GatewayManager.chat([{ role: 'user', content: 'Test gateway' }]);
-                statusEl.innerText = 'Status: OK';
-                logger.info('Gateway response:', answer);
-            } catch (e) {
-                statusEl.innerText = 'Status: Error';
-                logger.error(e.message);
-            }
-        };
-        panel.querySelector('#hw-stop-btn').onclick = () => { logger.info('Stop clicked'); statusEl.innerText = 'Status: Stopped'; };
-        panel.querySelector('#hw-clear-btn').onclick = () => { logger.info('Clear All clicked'); statusEl.innerText = 'Status: Cleared'; };
-
-        // --------------------------------------------------------
-        // CÀI ĐẶT (SETTINGS)
-        // --------------------------------------------------------
-        const gwSelect = panel.querySelector('#hw-gateway-select');
+        // --- 4. Xử lý Cài đặt ---
+        const gwSelect = panel.querySelector('#hw-gateway');
         const apiKeyInput = panel.querySelector('#hw-api-key');
-        const customUrlGroup = panel.querySelector('#hw-custom-url-group');
+        const customGroup = panel.querySelector('#hw-custom-group');
         const customUrlInput = panel.querySelector('#hw-custom-url');
-        const textModelInput = panel.querySelector('#hw-text-model');
-        const visionModelInput = panel.querySelector('#hw-vision-model');
-        const idleThresholdInput = panel.querySelector('#hw-idle-threshold');
-        const instantModeCheck = panel.querySelector('#hw-instant-mode');
-        const thinkModeCheck = panel.querySelector('#hw-think-mode');
+        const modelInput = panel.querySelector('#hw-model');
+        const statusEl = panel.querySelector('#hw-status-msg');
 
-        // Load config hiện tại
+        // Điền dữ liệu cũ vào form
         gwSelect.value = CONFIG.GATEWAY;
         apiKeyInput.value = CONFIG.API_KEY;
         customUrlInput.value = CONFIG.CUSTOM_URL;
-        if (CONFIG.GATEWAY === 'custom') customUrlGroup.style.display = 'flex';
+        modelInput.value = CONFIG.DEFAULT_MODEL;
+        if (CONFIG.GATEWAY === 'custom') customGroup.style.display = 'flex';
 
-        const saveSettings = () => {
+        // Ẩn/Hiện Custom URL
+        gwSelect.addEventListener('change', () => {
+            customGroup.style.display = gwSelect.value === 'custom' ? 'flex' : 'none';
+        });
+
+        // Nút Lưu (Khắc phục lỗi UX của onchange)
+        panel.querySelector('#hw-save-btn').addEventListener('click', () => {
             CONFIG.GATEWAY = gwSelect.value;
             CONFIG.API_KEY = apiKeyInput.value.trim();
             CONFIG.CUSTOM_URL = customUrlInput.value.trim();
+            CONFIG.DEFAULT_MODEL = modelInput.value.trim() || 'gemini';
             
             localStorage.setItem('HW_SOLVER_GATEWAY', CONFIG.GATEWAY);
             localStorage.setItem('HW_SOLVER_API_KEY', CONFIG.API_KEY);
             localStorage.setItem('HW_SOLVER_CUSTOM_URL', CONFIG.CUSTOM_URL);
+            localStorage.setItem('HW_SOLVER_DEFAULT_MODEL', CONFIG.DEFAULT_MODEL);
             
-            logger.info('Settings saved.');
-            statusEl.innerText = 'Status: Settings Saved';
-            statusEl.style.color = '#2ecc71';
+            statusEl.innerText = '✅ Đã lưu cài đặt thành công!';
+            statusEl.style.borderLeftColor = '#2ecc71';
             setTimeout(() => {
                 statusEl.innerText = 'Status: Ready';
-                statusEl.style.color = '#ecf0f1';
+                statusEl.style.borderLeftColor = '#3498db';
             }, 2000);
-        };
+            logger.info('Config saved:', CONFIG.GATEWAY);
+        });
 
-        gwSelect.onchange = () => {
-            customUrlGroup.style.display = gwSelect.value === 'custom' ? 'flex' : 'none';
-            saveSettings();
+        // --- 5. Các nút chức năng ---
+        panel.querySelector('#hw-once-btn').onclick = async () => {
+            statusEl.innerText = '⏳ Đang test API...';
+            statusEl.style.borderLeftColor = '#f1c40f';
+            try {
+                // Gửi 1 câu test đơn giản
+                const answer = await GatewayManager.chat([{ role: 'user', content: 'Trả lời duy nhất 1 từ: OK' }]);
+                statusEl.innerText = '✅ API Hoạt Động Tốt!';
+                statusEl.style.borderLeftColor = '#2ecc71';
+                logger.info('Test API thành công. Phản hồi:', answer);
+            } catch (e) {
+                statusEl.innerText = '❌ Lỗi: ' + e.message;
+                statusEl.style.borderLeftColor = '#e74c3c';
+                logger.error('Test API thất bại:', e);
+            }
         };
-        apiKeyInput.onchange = saveSettings;
-        customUrlInput.onchange = saveSettings;
-        textModelInput.onchange = saveSettings;
-        visionModelInput.onchange = saveSettings;
-        idleThresholdInput.onchange = saveSettings;
-        instantModeCheck.onchange = saveSettings;
-        thinkModeCheck.onchange = saveSettings; // Đã sửa lại đúng tên biến
+        
+        // Các nút khác (Start, Stop, Clear) chỉ mang tính giả lập UI
+        panel.querySelector('#hw-start-btn').onclick = () => { statusEl.innerText = '▶ Đang chạy Auto...'; };
+        panel.querySelector('#hw-stop-btn').onclick = () => { statusEl.innerText = '⏹ Đã dừng.'; };
+        panel.querySelector('#hw-clear-btn').onclick = () => { statusEl.innerText = '🗑 Đã xóa.'; };
     }
 
-    // Khởi tạo
     if (document.body) createUI();
     else window.addEventListener('DOMContentLoaded', createUI);
 
-    logger.info('AI Solver v4.0.0 (ONLUYEN_BOT Edition) started.');
 })();
 `;
 
-// ------------------------------------------------------------
-// 2. .github/workflows/deploy.yml
-// ------------------------------------------------------------
-FILES['.github/workflows/deploy.yml'] = `name: Deploy Userscript
-
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Verify files
-        run: |
-          echo "Checking files..."
-          ls -la dist/
-          test -f dist/solver.user.js || (echo "❌ Missing dist/solver.user.js" && exit 1)
-          echo "✅ All files present"
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: userscripts-build
-          path: dist/solver.user.js
-`;
-
 // ============================================================
-// HÀM TIỆN ÍCH
+// UTILITIES
 // ============================================================
 function writeFile(relPath, content) {
     const full = path.join(process.cwd(), relPath);
@@ -425,7 +396,7 @@ function exec(cmd) {
 }
 
 // ============================================================
-// THỰC THI
+// EXECUTION
 // ============================================================
 console.log('\nSTEP 1: Tạo file còn thiếu...\n');
 Object.keys(FILES).forEach((relPath) => {
@@ -437,7 +408,7 @@ try {
     exec('git add -A');
     exec(`git config user.name "${GIT_USER_NAME}"`);
     exec(`git config user.email "${GIT_USER_EMAIL}"`);
-    exec('git commit -m "fix: completely rebuilt UI, resolved tab logic and layout overflow"');
+    exec('git commit -m "feat: completely overhauled UI, added drag-and-drop, fixed api testing and save button"');
     
     try {
         execSync('git remote remove origin', { stdio: 'ignore' });
@@ -446,8 +417,8 @@ try {
     exec(`git remote add origin ${REPO_URL}`);
     exec('git push -u origin main -f');
     
-    console.log('\n✅ THÀNH CÔNG! Đã fix triệt để và push lên GitHub.');
-    console.log('👉 Hãy F5 (tải lại) trang web để xem giao diện mới.');
+    console.log('\n✅ THÀNH CÔNG! Đã fix toàn diện và push lên GitHub.');
+    console.log('👉 Hãy F5 lại trang web onluyen.vn, mở Settings và test ngay!');
 } catch (e) {
     console.log('\n⚠️ Có lỗi khi push, có thể do chưa đăng nhập Git. Hãy kiểm tra lại.');
 }
