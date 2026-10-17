@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Intelligent AI Homework Solver (ONLUYEN_BOT Edition)
 // @namespace    https://github.com/thanhngucomvn999/ONLUYEN_BOT
-// @version      3.1.0
+// @version      3.1.1
 // @author       The-Lazybone & thanhngucomvn999
 // @description  Advanced AI-powered homework solver for onluyen.vn with multi-gateway support
 // @license      MIT
@@ -133,30 +133,31 @@
     function createUI() {
         if (document.getElementById('hw-solver-overlay')) return;
 
+        // CSS: Sử dụng box-sizing: border-box cho tất cả để không bị tràn
         const styles = [
-            '#hw-solver-overlay { position: fixed; bottom: 20px; right: 20px; width: 260px; background: #2c3e50; color: white; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif; z-index: 999999; overflow: hidden; transition: all 0.3s ease; }',
-            '#hw-solver-header { padding: 10px; background: #34495e; display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; }',
-            '#hw-solver-status { font-size: 14px; font-weight: bold; margin-bottom: 5px; color: #ecf0f1; }',
-            '.hw-input-group { display: flex; flex-direction: column; gap: 5px; margin-bottom: 5px; }',
-            '.hw-input-group label { font-size: 11px; color: #bdc3c7; }',
-            '.hw-key-input, .hw-select { padding: 6px; border: 1px solid #34495e; border-radius: 4px; background: #3d566e; color: white; font-size: 12px; }',
-            '.hw-btn { padding: 8px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; transition: background 0.2s; color: white; margin-bottom: 5px; }',
+            '#hw-solver-overlay { position: fixed; bottom: 20px; right: 20px; width: 300px; background: #2c3e50; color: white; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif; z-index: 999999; overflow: hidden; transition: all 0.3s ease; }',
+            '#hw-solver-overlay * { box-sizing: border-box; }',
+            '#hw-solver-header { padding: 10px 12px; background: #34495e; display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; font-weight: bold; }',
+            '#hw-solver-status { font-size: 13px; margin-bottom: 10px; color: #ecf0f1; text-align: center; }',
+            '.hw-input-group { display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px; }',
+            '.hw-input-group label { font-size: 11px; color: #bdc3c7; font-weight: 600; }',
+            '.hw-key-input, .hw-select { width: 100%; padding: 8px; border: 1px solid #34495e; border-radius: 4px; background: #3d566e; color: white; font-size: 12px; }',
+            '.hw-btn { width: 100%; padding: 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; transition: background 0.2s; color: white; margin-bottom: 8px; font-size: 12px; }',
             '.hw-btn-start { background: #27ae60; } .hw-btn-start:hover { background: #2ecc71; }',
             '.hw-btn-once { background: #2980b9; } .hw-btn-once:hover { background: #3498db; }',
             '.hw-btn-stop { background: #c0392b; } .hw-btn-stop:hover { background: #e74c3c; }',
             '.hw-btn-clear { background: #7f8c8d; } .hw-btn-clear:hover { background: #95a5a6; }',
             '#hw-tab-bar { display: flex; background: #34495e; border-bottom: 1px solid #2c3e50; }',
-            '.hw-tab { flex: 1; padding: 8px; text-align: center; font-size: 11px; cursor: pointer; color: #bdc3c7; transition: all 0.2s; }',
+            '.hw-tab { flex: 1; padding: 10px; text-align: center; font-size: 12px; cursor: pointer; color: #bdc3c7; transition: all 0.2s; }',
             '.hw-tab.active { color: white; background: #2c3e50; border-bottom: 2px solid #3498db; }',
-            '.hw-tab-content { padding: 15px; display: none; flex-direction: column; gap: 10px; max-height: 400px; overflow-y: auto; }',
+            '.hw-tab-content { padding: 15px; display: none; flex-direction: column; max-height: 400px; overflow-y: auto; overflow-x: hidden; }',
             '.hw-tab-content.active { display: flex; }',
             '.hw-checkbox-group { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #ecf0f1; cursor: pointer; margin-top: 5px; }',
-            '.hw-checkbox-group input { cursor: pointer; }',
-            '.hw-footer { padding: 8px; background: #34495e; text-align: center; font-size: 10px; color: #bdc3c7; border-top: 1px solid #2c3e50; }',
+            '.hw-footer { padding: 10px; background: #34495e; text-align: center; font-size: 11px; color: #bdc3c7; border-top: 1px solid #2c3e50; }',
             '.hw-footer a { color: #3498db; text-decoration: none; }',
             '.hw-footer a:hover { text-decoration: underline; }',
-            '.minimized { height: 40px !important; width: 140px !important; }',
-            '.minimized #hw-tab-bar, .minimized .hw-tab-content, .minimized .hw-footer { display: none !important; }'
+            '.minimized #hw-main-wrapper { display: none; }',
+            '.minimized { width: 150px !important; }'
         ].join('\n');
 
         const styleSheet = document.createElement('style');
@@ -168,21 +169,21 @@
         panel.id = 'hw-solver-overlay';
         panel.innerHTML = [
             '<div id="hw-solver-header">',
-            '    AI Solver <span id="hw-solver-toggle">▼</span>',
+            '    <span>AI Solver</span><span id="hw-solver-toggle">▼</span>',
             '</div>',
-            '<div id="hw-solver-content">',
+            '<div id="hw-main-wrapper">',
             '    <div id="hw-tab-bar">',
             '        <div class="hw-tab active" data-tab="solver">Solver</div>',
             '        <div class="hw-tab" data-tab="settings">Settings</div>',
             '    </div>',
-            '    <div id="hw-solver-content-tab" class="hw-tab-content active">',
+            '    <div id="hw-solver-tab" class="hw-tab-content active">',
             '        <div id="hw-solver-status">Status: Ready</div>',
             '        <button id="hw-start-btn" class="hw-btn hw-btn-start">Start Auto</button>',
             '        <button id="hw-once-btn" class="hw-btn hw-btn-once">Solve Once</button>',
             '        <button id="hw-stop-btn" class="hw-btn hw-btn-stop">Stop</button>',
             '        <button id="hw-clear-btn" class="hw-btn hw-btn-clear">Clear All</button>',
             '    </div>',
-            '    <div id="hw-settings-content" class="hw-tab-content">',
+            '    <div id="hw-settings-tab" class="hw-tab-content">',
             '        <div class="hw-input-group">',
             '            <label>Gateway:</label>',
             '            <select id="hw-gateway-select" class="hw-select">',
@@ -229,27 +230,24 @@
 
         const statusEl = panel.querySelector('#hw-solver-status');
 
-        // Tab switching
+        // Tab switching (Đã sửa ID để không bị xung đột)
         panel.querySelectorAll('.hw-tab').forEach(tab => {
             tab.onclick = () => {
                 panel.querySelectorAll('.hw-tab').forEach(t => t.classList.remove('active'));
                 panel.querySelectorAll('.hw-tab-content').forEach(c => c.classList.remove('active'));
                 tab.classList.add('active');
-                panel.querySelector('#hw-' + tab.dataset.tab + '-content').classList.add('active');
+                panel.querySelector('#hw-' + tab.dataset.tab + '-tab').classList.add('active');
             };
         });
 
-        // Minimize
+        // Minimize (Thu nhỏ / Mở rộng)
         panel.querySelector('#hw-solver-header').onclick = () => {
-            const content = panel.querySelector('#hw-solver-content');
             const toggle = panel.querySelector('#hw-solver-toggle');
             if (panel.classList.contains('minimized')) {
                 panel.classList.remove('minimized');
-                content.style.display = 'flex';
                 toggle.innerText = '▼';
             } else {
                 panel.classList.add('minimized');
-                content.style.display = 'none';
                 toggle.innerText = '▲';
             }
         };
@@ -321,5 +319,5 @@
     if (document.body) createUI();
     else window.addEventListener('DOMContentLoaded', createUI);
 
-    logger.info('AI Solver v3.1.0 (ONLUYEN_BOT Edition) started.');
+    logger.info('AI Solver v3.1.1 (ONLUYEN_BOT Edition) started.');
 })();
