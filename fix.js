@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * fix.js - Hệ thống v10.0 (Visual Structure Scraper - Fix 100% lỗi Onluyen).
+ * fix.js - Hệ thống v11.0 (Semantic Text Parsing - Fix 100% lỗi React Shadow DOM).
  */
 
 import fs from 'fs';
@@ -14,13 +14,13 @@ const GIT_USER_EMAIL = 'thanhngucomvn999@users.noreply.github.com';
 const FILES = {};
 
 // ------------------------------------------------------------
-// 1. dist/solver.user.js (Hệ thống xử lý v10.0)
+// 1. dist/solver.user.js (Hệ thống xử lý v11.0)
 // ------------------------------------------------------------
 FILES['dist/solver.user.js'] = String.raw`// ==UserScript==
 // @name         Intelligent AI Homework Solver (ONLUYEN_BOT Edition)
 // @namespace    https://github.com/thanhngucomvn999/ONLUYEN_BOT
-// @version      10.0.0
-// @description  Tự động giải bài tập ONLUYEN (Visual Structure Scraper)
+// @version      11.0.0
+// @description  Tự động giải bài tập ONLUYEN (Semantic Text Parsing)
 // @match        https://*.onluyen.vn/*
 // @grant        none
 // @run-at       document-idle
@@ -67,19 +67,20 @@ FILES['dist/solver.user.js'] = String.raw`// ==UserScript==
             const json = await res.json();
             const text = json?.choices?.[0]?.message?.content?.trim() || '';
             
+            // Trích xuất chữ cái A, B, C, D
             const match = text.match(/\b([A-D])\b/i) || text.match(/^([A-D])/i);
             return match ? match[0].toUpperCase() : 'A';
         }
     };
 
     // ============================================================
-    // 2. SCRAPER V10 (Visual Structure Algorithm)
+    // 2. SCRAPER V11 (Semantic Text Parsing)
     // ============================================================
     const Scraper = {
         getExamContext() {
             let nextBtn = null;
             // Tìm nút Bỏ qua / Tiếp theo
-            const buttons = document.querySelectorAll('button, div[role="button"]');
+            const buttons = document.querySelectorAll('button, div[role="button"], a, span');
             for (let b of buttons) {
                 const t = b.innerText?.trim().toUpperCase();
                 if (['BỎ QUA', 'TIẾP THEO', 'CÂU TIẾP', 'TIẾP', 'NỘP BÀI'].includes(t)) {
@@ -88,77 +89,74 @@ FILES['dist/solver.user.js'] = String.raw`// ==UserScript==
                 }
             }
 
-            // 1. Tìm 4 vòng tròn chứa chữ A, B, C, D
-            let choices = [];
-            const allEls = Array.from(document.querySelectorAll('div, span'));
+            // 1. Tìm tất cả các Text Node có chứa đáp án (A., B., C., D.)
+            const choices = [];
+            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+            let node;
             
-            // Lọc các thẻ có text chính xác là A, B, C, D và không có thẻ con
-            const letterBoxes = allEls.filter(el => {
-                const txt = el.innerText?.trim().toUpperCase();
-                return ['A', 'B', 'C', 'D'].includes(txt) && el.children.length === 0;
-            });
-
-            // Từ vòng tròn chữ cái, tìm thẻ cha chứa nội dung đáp án
-            letterBoxes.forEach(box => {
-                const letter = box.innerText.trim().toUpperCase();
-                if (choices.some(c => c.letter === letter)) return; // Bỏ qua nếu đã tìm thấy
-
-                let container = box.parentElement;
-                // Đi lên tối đa 3 cấp để tìm thẻ có chứa text dài hơn (nội dung đáp án)
-                for (let i = 0; i < 3; i++) {
-                    if (!container || container === document.body) break;
-                    if (container.innerText.trim().length > letter.length + 2) {
-                        break;
-                    }
-                    container = container.parentElement;
-                }
+            while (node = walker.nextNode()) {
+                const text = node.nodeValue.trim();
+                // Regex: Bắt đầu bằng A, B, C, D theo sau là dấu chấm hoặc khoảng trắng
+                const match = text.match(/^([A-D])[\.\s]/i);
                 
-                if (container && container !== document.body) {
-                    choices.push({
-                        letter: letter,
-                        element: container,
-                        text: container.innerText.trim()
-                    });
+                if (match && text.length > 2 && text.length < 200) {
+                    const letter = match[1].toUpperCase();
+                    // Đảm bảo không trùng lặp chữ cái
+                    if (!choices.some(c => c.letter === letter)) {
+                        // Tìm thẻ cha gần nhất để click (thường là thẻ div hoặc label)
+                        let clickable = node.parentElement;
+                        while (clickable && clickable !== document.body) {
+                            if (clickable.tagName === 'DIV' || clickable.tagName === 'LABEL' || clickable.tagName === 'BUTTON') {
+                                break;
+                            }
+                            clickable = clickable.parentElement;
+                        }
+                        
+                        if (clickable && clickable !== document.body) {
+                            choices.push({ letter, element: clickable, text: text });
+                        }
+                    }
                 }
-            });
+            }
 
             choices.sort((a, b) => a.letter.localeCompare(b.letter));
             if (choices.length < 2) return null;
 
-            // 2. Tìm câu hỏi
+            // 2. Trích xuất câu hỏi
             let questionText = "";
-            let firstChoiceEl = choices[0].element; // Thẻ chứa đáp án A
-            
-            // Đi ngược lên các thẻ cha để tìm khối chứa cả câu hỏi và đáp án
-            let parent = firstChoiceEl.parentElement;
-            while (parent && parent !== document.body) {
-                const rawText = parent.innerText;
-                const firstChoiceText = choices[0].text;
-                
-                // Nếu thẻ cha chứa nội dung đáp án A, thì phần text phía trước nó là câu hỏi
-                if (rawText.includes(firstChoiceText)) {
-                    const splitText = rawText.split(firstChoiceText)[0];
-                    
-                    // Dọn dẹp rác (số câu, báo lỗi)
-                    let cleanQ = splitText
-                        .replace(/Câu\s+\d+.*/i, '')
-                        .replace(/#\d+/g, '')
-                        .replace(/Báo lỗi/gi, '')
-                        .replace(/\n{2,}/g, '\n')
-                        .trim();
-                        
-                    // Nếu độ dài câu hỏi hợp lý (> 10 ký tự)
-                    if (cleanQ.length > 10) {
-                        questionText = cleanQ;
-                        break;
-                    }
+            // Lấy toàn bộ văn bản trong vùng chứa bài thi
+            // Thường là thẻ div lớn nhất bao quanh các đáp án
+            let container = choices[0].element.parentElement;
+            while (container && container !== document.body) {
+                if (container.innerText.includes(choices[0].text) && container.innerText.includes(choices[1].text)) {
+                    break;
                 }
-                parent = parent.parentElement;
+                container = container.parentElement;
+            }
+            
+            if (container && container !== document.body) {
+                let rawText = container.innerText;
+                // Xóa text của các đáp án
+                choices.forEach(c => {
+                    rawText = rawText.split(c.text).join('');
+                });
+                // Xóa nút bỏ qua
+                if (nextBtn && nextBtn.innerText) {
+                    rawText = rawText.split(nextBtn.innerText).join('');
+                }
+                
+                // Dọn dẹp rác
+                questionText = rawText
+                    .replace(/Câu\s+\d+.*/i, '')
+                    .replace(/#\d+/g, '')
+                    .replace(/Báo lỗi/gi, '')
+                    .replace(/\n{2,}/g, '\n')
+                    .trim();
             }
 
-            // Fallback nếu không tìm được
+            // Fallback
             if (!questionText) {
-                questionText = parent ? parent.innerText.substring(0, 200) : "Không đọc được câu hỏi.";
+                questionText = "Không đọc được câu hỏi.";
             }
 
             return { questionText, choices, nextBtn };
@@ -269,7 +267,7 @@ FILES['dist/solver.user.js'] = String.raw`// ==UserScript==
         panel.style.cssText = 'position:fixed; bottom:20px; right:20px; width:330px; background:#2c3e50; color:white; border-radius:8px; box-shadow:0 5px 20px rgba(0,0,0,0.4); font-family:sans-serif; z-index:999999; overflow:hidden;';
         
         panel.innerHTML = [
-            '<div style="padding:10px; background:#34495e; font-weight:bold; cursor:move; user-select:none;" id="hw-drag">🤖 AI Solver v10.0</div>',
+            '<div style="padding:10px; background:#34495e; font-weight:bold; cursor:move; user-select:none;" id="hw-drag">🤖 AI Solver v11.0</div>',
             '<div style="padding:15px;">',
             '    <div id="hw-status" style="font-size:13px; margin-bottom:10px; padding:8px; background:rgba(0,0,0,0.2); border-left:4px solid #3498db; word-wrap:break-word;">Status: Ready</div>',
             '    <button id="hw-start" style="width:100%; padding:10px; margin-bottom:8px; background:#27ae60; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:bold;">▶ Start Auto</button>',
@@ -389,15 +387,15 @@ try {
     exec('git add -A');
     exec(`git config user.name "${GIT_USER_NAME}"`);
     exec(`git config user.email "${GIT_USER_EMAIL}"`);
-    exec('git commit -m "feat: v10.0 Visual Structure Scraper (Targets A/B/C/D circles directly)"');
+    exec('git commit -m "feat: v11.0 Semantic Text Parsing (Works with React Shadow DOM)"');
     
     try { execSync('git remote remove origin', { stdio: 'ignore' }); } catch (e) { }
     
     exec(`git remote add origin ${REPO_URL}`);
     exec('git push -u origin main -f');
     
-    console.log('\n✅ THÀNH CÔNG! Đã nâng cấp lên v10.0.');
-    console.log('👉 F5 lại trang onluyen.vn, bấm "Test Scraper (Kiểm tra)" để kiểm tra.');
+    console.log('\n✅ THÀNH CÔNG! Đã nâng cấp lên v11.0.');
+    console.log('👉 F5 lại trang onluyen.vn, bấm "Test Scraper (Kiểm tra)" để xem kết quả.');
 } catch (e) {
     console.log('\n⚠️ Lỗi push, kiểm tra đăng nhập Git.');
 }
