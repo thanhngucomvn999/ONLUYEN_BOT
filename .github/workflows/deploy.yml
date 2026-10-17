@@ -1,0 +1,22 @@
+name: Deploy Userscript
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Verify files
+        run: |
+          test -f dist/solver.user.js || (echo "Missing dist/solver.user.js" && exit 1)
+          echo "All files present"
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: userscripts-build
+          path: dist/solver.user.js

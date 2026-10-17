@@ -1,0 +1,16 @@
+{
+  "name": "onluyen-homework-auto-solver",
+  "version": "3.0.0",
+  "description": "Advanced AI-powered homework solver with multi-gateway support",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0"
+  },
+  "author": "thanhngucomvn999",
+  "license": "MIT"
+}
