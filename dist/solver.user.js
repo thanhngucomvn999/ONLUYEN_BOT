@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Intelligent AI Homework Solver (ONLUYEN_BOT Edition)
 // @namespace    https://github.com/thanhngucomvn999/ONLUYEN_BOT
-// @version      3.1.1
+// @version      3.1.2
 // @author       The-Lazybone & thanhngucomvn999
 // @description  Advanced AI-powered homework solver for onluyen.vn with multi-gateway support
 // @license      MIT
@@ -133,7 +133,6 @@
     function createUI() {
         if (document.getElementById('hw-solver-overlay')) return;
 
-        // CSS: Sử dụng box-sizing: border-box cho tất cả để không bị tràn
         const styles = [
             '#hw-solver-overlay { position: fixed; bottom: 20px; right: 20px; width: 300px; background: #2c3e50; color: white; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif; z-index: 999999; overflow: hidden; transition: all 0.3s ease; }',
             '#hw-solver-overlay * { box-sizing: border-box; }',
@@ -173,17 +172,17 @@
             '</div>',
             '<div id="hw-main-wrapper">',
             '    <div id="hw-tab-bar">',
-            '        <div class="hw-tab active" data-tab="solver">Solver</div>',
-            '        <div class="hw-tab" data-tab="settings">Settings</div>',
+            '        <div class="hw-tab active">Solver</div>',
+            '        <div class="hw-tab">Settings</div>',
             '    </div>',
-            '    <div id="hw-solver-tab" class="hw-tab-content active">',
+            '    <div class="hw-tab-content active">',
             '        <div id="hw-solver-status">Status: Ready</div>',
             '        <button id="hw-start-btn" class="hw-btn hw-btn-start">Start Auto</button>',
             '        <button id="hw-once-btn" class="hw-btn hw-btn-once">Solve Once</button>',
             '        <button id="hw-stop-btn" class="hw-btn hw-btn-stop">Stop</button>',
             '        <button id="hw-clear-btn" class="hw-btn hw-btn-clear">Clear All</button>',
             '    </div>',
-            '    <div id="hw-settings-tab" class="hw-tab-content">',
+            '    <div class="hw-tab-content">',
             '        <div class="hw-input-group">',
             '            <label>Gateway:</label>',
             '            <select id="hw-gateway-select" class="hw-select">',
@@ -229,14 +228,19 @@
         document.body.appendChild(panel);
 
         const statusEl = panel.querySelector('#hw-solver-status');
+        const tabs = panel.querySelectorAll('.hw-tab');
+        const contents = panel.querySelectorAll('.hw-tab-content');
 
-        // Tab switching (Đã sửa ID để không bị xung đột)
-        panel.querySelectorAll('.hw-tab').forEach(tab => {
+        // LOGIC CHUYỂN TAB MỚI: Đối chiếu theo thứ tự (Index) thay vì tìm ID
+        tabs.forEach((tab, index) => {
             tab.onclick = () => {
-                panel.querySelectorAll('.hw-tab').forEach(t => t.classList.remove('active'));
-                panel.querySelectorAll('.hw-tab-content').forEach(c => c.classList.remove('active'));
+                tabs.forEach(t => t.classList.remove('active'));
+                contents.forEach(c => c.classList.remove('active'));
+                
                 tab.classList.add('active');
-                panel.querySelector('#hw-' + tab.dataset.tab + '-tab').classList.add('active');
+                if (contents[index]) {
+                    contents[index].classList.add('active');
+                }
             };
         });
 
@@ -313,11 +317,11 @@
         visionModelInput.onchange = saveSettings;
         idleThresholdInput.onchange = saveSettings;
         instantModeCheck.onchange = saveSettings;
-        thinkModeCheck.onchange = saveSettings;
+        thinkModeInput.onchange = saveSettings;
     }
 
     if (document.body) createUI();
     else window.addEventListener('DOMContentLoaded', createUI);
 
-    logger.info('AI Solver v3.1.1 (ONLUYEN_BOT Edition) started.');
+    logger.info('AI Solver v3.1.2 (ONLUYEN_BOT Edition) started.');
 })();
