@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Intelligent AI Homework Solver (ONLUYEN_BOT Edition)
 // @namespace    https://github.com/thanhngucomvn999/ONLUYEN_BOT
-// @version      8.0.0
-// @description  Tự động giải bài tập ONLUYEN (Bạo lực quét DOM)
+// @version      9.0.0
+// @description  Tự động giải bài tập ONLUYEN (LCA Scraper)
 // @match        https://*.onluyen.vn/*
 // @grant        none
 // @run-at       document-idle
@@ -35,15 +35,7 @@
                     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + CONFIG.API_KEY },
                     body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'user', content: prompt }], temperature: 0 })
                 };
-            } else if (CONFIG.GATEWAY === 'onluyen_bot') {
-                url = 'https://raw.githubusercontent.com/thanhngucomvn999/ONLUYEN_BOT/main/api/chat'; // Placeholder
-                options = {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + CONFIG.API_KEY },
-                    body: JSON.stringify({ messages: [{ role: 'user', content: prompt }] })
-                };
             } else {
-                // Pollinations (Mặc định)
                 url = 'https://gen.pollinations.ai/v1/chat/completions';
                 options = {
                     method: 'POST',
@@ -57,94 +49,116 @@
             const json = await res.json();
             const text = json?.choices?.[0]?.message?.content?.trim() || '';
             
-            // Trích xuất chữ cái A, B, C, D từ phản hồi của AI
             const match = text.match(/\b([A-D])\b/i) || text.match(/^([A-D])/i);
             return match ? match[0].toUpperCase() : 'A';
         }
     };
 
     // ============================================================
-    // 2. SCRAPER V8 (Bạo lực - Quét text thay vì class)
+    // 2. SCRAPER V9 (Lowest Common Ancestor Algorithm)
     // ============================================================
     const Scraper = {
+        // Hàm tìm tổ tiên chung của 2 node
+        getCommonAncestor(node1, node2) {
+            if (!node1 || !node2) return document.body;
+            const ancestors1 = new Set();
+            let curr = node1;
+            while (curr) {
+                ancestors1.add(curr);
+                curr = curr.parentElement;
+            }
+            curr = node2;
+            while (curr) {
+                if (ancestors1.has(curr)) return curr;
+                curr = curr.parentElement;
+            }
+            return document.body;
+        },
+
         getExamContext() {
-            // 1. Tìm nút "BỎ QUA" hoặc "TIẾP" để làm mốc
             let nextBtn = null;
-            const allButtons = Array.from(document.querySelectorAll('button, div[role="button"]'));
-            for (let btn of allButtons) {
-                const text = btn.innerText?.trim().toUpperCase();
-                if (text === 'BỎ QUA' || text === 'TIẾP THEO' || text === 'CÂU TIẾP' || text === 'TIẾP' || text === 'NỘP BÀI') {
-                    nextBtn = btn;
+            const buttons = document.querySelectorAll('button, div[role="button"], a, span');
+            for (let b of buttons) {
+                const t = b.innerText?.trim().toUpperCase();
+                if (['BỎ QUA', 'TIẾP THEO', 'CÂU TIẾP', 'TIẾP', 'NỘP BÀI'].includes(t)) {
+                    nextBtn = b;
                     break;
                 }
             }
 
-            // Nếu không tìm thấy nút, lấy toàn bộ body
-            let container = nextBtn ? nextBtn.parentElement.parentElement.parentElement : document.body;
+            // Tìm các thẻ chứa đáp án
+            const choices = [];
+            const allEls = Array.from(document.querySelectorAll('div, p, label, span'));
             
-            // 2. Tìm các hộp chứa chữ A, B, C, D (Dựa vào text chính xác)
-            let choices = [];
-            // Tìm tất cả các thẻ div, span có text là A, B, C hoặc D và không có con
-            const letterBoxes = Array.from(container.querySelectorAll('div, span')).filter(el => {
-                const t = el.innerText?.trim().toUpperCase();
-                return ['A', 'B', 'C', 'D'].includes(t) && el.children.length === 0;
-            });
-
-            if (letterBoxes.length >= 4) {
-                // Với mỗi hộp chữ cái, thẻ cha của nó chính là dòng đáp án
-                letterBoxes.forEach(box => {
-                    const row = box.parentElement; 
-                    const letter = box.innerText.trim().toUpperCase();
+            for (let el of allEls) {
+                if (el === document.body || el.children.length > 4) continue; 
+                
+                const txt = el.innerText?.trim() || '';
+                // Tìm thẻ bắt đầu bằng A., B., C., D. hoặc A, B, C, D
+                const match = txt.match(/^([A-D])[\.\s]/i);
+                
+                if (match && txt.length > 2 && txt.length < 200) {
+                    const letter = match[1].toUpperCase();
                     
-                    // Chỉ lấy 1 đáp án cho mỗi chữ cái
-                    if (!choices.find(c => c.letter === letter)) {
-                        choices.push({ 
-                            letter: letter, 
-                            element: row, 
-                            fullText: row.innerText.trim() 
-                        });
-                    }
-                });
-            } 
-            
-            // Fallback: Nếu không tìm thấy hộp chữ cái, tìm text bắt đầu bằng "A.", "B."
-            if (choices.length < 4) {
-                choices = [];
-                const textNodes = Array.from(container.querySelectorAll('div, label, p'));
-                for (let el of textNodes) {
-                    const t = el.innerText?.trim();
-                    if (/^[A-D][\.\s]/i.test(t) && t.length < 150 && el.children.length <= 2) {
-                        const letter = t.charAt(0).toUpperCase();
-                        if (!choices.find(c => c.letter === letter)) {
-                            choices.push({ letter: letter, element: el, fullText: t });
-                        }
+                    // Đảm bảo không bị lấy thẻ cha chứa cả 4 đáp án
+                    if (!choices.some(c => c.element.contains(el))) {
+                        // Loại bỏ các thẻ con đã được thêm trước đó (nếu có)
+                        const filteredChoices = choices.filter(c => !el.contains(c.element));
+                        choices.length = 0; 
+                        choices.push(...filteredChoices);
+                        
+                        choices.push({ letter: letter, element: el, text: txt });
                     }
                 }
             }
 
-            choices.sort((a, b) => a.letter.localeCompare(b.letter));
+            // Lọc trùng lặp chữ cái
+            const finalChoices = [];
+            const seen = new Set();
+            for (let c of choices) {
+                if (!seen.has(c.letter)) {
+                    finalChoices.push(c);
+                    seen.add(c.letter);
+                }
+            }
+            finalChoices.sort((a, b) => a.letter.localeCompare(b.letter));
 
-            if (choices.length < 2) return null;
+            if (finalChoices.length < 2) return null;
 
-            // 3. Trích xuất câu hỏi (Lấy text của container, cắt bỏ phần đáp án và nút)
-            let rawText = container.innerText;
+            // Tìm thẻ cha chung bao bọc tất cả các đáp án
+            let commonAncestor = finalChoices[0].element;
+            for (let i = 1; i < finalChoices.length; i++) {
+                commonAncestor = this.getCommonAncestor(commonAncestor, finalChoices[i].element);
+            }
             
-            if (nextBtn) rawText = rawText.replace(nextBtn.innerText, '');
-            choices.forEach(c => {
-                rawText = rawText.replace(c.fullText, '');
+            // Nếu thẻ cha chung là body, lùi lại tìm thẻ cha gần nhất
+            if (commonAncestor === document.body) {
+                commonAncestor = finalChoices[0].element.parentElement.parentElement;
+            }
+
+            // Lấy câu hỏi
+            let rawText = commonAncestor.innerText;
+            
+            // Xóa text của đáp án
+            finalChoices.forEach(c => {
+                // Thay thế bằng chuỗi rỗng (dùng hàm replace an toàn)
+                rawText = rawText.split(c.text).join('');
             });
             
-            // Xóa các dòng rác (Câu số, mã đề)
+            // Xóa nút bỏ qua
+            if (nextBtn && nextBtn.innerText) {
+                rawText = rawText.split(nextBtn.innerText).join('');
+            }
+
+            // Dọn dẹp rác
             let questionText = rawText
                 .replace(/Câu\s+\d+.*$/gm, '')
                 .replace(/#\d+/g, '')
                 .replace(/Báo lỗi/gi, '')
+                .replace(/\n{2,}/g, '\n')
                 .trim();
 
-            // Nếu câu hỏi quá ngắn, lấy toàn bộ text của container
-            if (questionText.length < 10) questionText = rawText.trim();
-
-            return { questionText, choices, nextBtn };
+            return { questionText, choices: finalChoices, nextBtn };
         },
 
         clickChoice(letter) {
@@ -183,15 +197,15 @@
                 updateStatus('⏳ Đang quét đề...');
                 const context = Scraper.getExamContext();
 
-                if (!context) {
-                    updateStatus('❌ Không đọc được đề! Hãy thử lại.', 'error');
+                if (!context || !context.questionText) {
+                    updateStatus('❌ Không đọc được đề! Hãy bấm Test Scraper.', 'error');
                     return false;
                 }
 
                 updateStatus('🧠 AI đang suy nghĩ...');
                 const prompt = "Bạn là chuyên gia giải bài tập. Hãy đọc câu hỏi và chọn đáp án đúng nhất.\n"
                              + "Câu hỏi: " + context.questionText + "\n"
-                             + "Các đáp án:\n" + context.choices.map(c => c.fullText).join('\n') + "\n"
+                             + "Các đáp án:\n" + context.choices.map(c => c.text).join('\n') + "\n"
                              + "YÊU CẦU: Chỉ trả về 1 chữ cái duy nhất (A, B, C hoặc D). Không giải thích.";
                 
                 const correctLetter = await ApiClient.askAI(prompt);
@@ -202,7 +216,7 @@
                 if (success) {
                     updateStatus('✅ Đã chọn ' + correctLetter, 'success');
                 } else {
-                    updateStatus('⚠️ Không click được đáp án!', 'error');
+                    updateStatus('⚠️ Lỗi click!', 'error');
                 }
 
                 setTimeout(() => {
@@ -252,7 +266,7 @@
         panel.style.cssText = 'position:fixed; bottom:20px; right:20px; width:330px; background:#2c3e50; color:white; border-radius:8px; box-shadow:0 5px 20px rgba(0,0,0,0.4); font-family:sans-serif; z-index:999999; overflow:hidden;';
         
         panel.innerHTML = [
-            '<div style="padding:10px; background:#34495e; font-weight:bold; cursor:move; user-select:none;" id="hw-drag">🤖 AI Solver v8.0</div>',
+            '<div style="padding:10px; background:#34495e; font-weight:bold; cursor:move; user-select:none;" id="hw-drag">🤖 AI Solver v9.0</div>',
             '<div style="padding:15px;">',
             '    <div id="hw-status" style="font-size:13px; margin-bottom:10px; padding:8px; background:rgba(0,0,0,0.2); border-left:4px solid #3498db; word-wrap:break-word;">Status: Ready</div>',
             '    <button id="hw-start" style="width:100%; padding:10px; margin-bottom:8px; background:#27ae60; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:bold;">▶ Start Auto</button>',
@@ -300,11 +314,11 @@
         };
 
         document.getElementById('hw-test').onclick = () => {
-            updateStatus('⏳ Đang quét thử...');
+            updateStatus('⏳ Đang quét thử bằng LCA...');
             const context = Scraper.getExamContext();
             
             if (!context) {
-                updateStatus('❌ Vẫn không đọc được đề! Cấu trúc web quá lạ.', 'error');
+                updateStatus('❌ Vẫn không đọc được đề! Hãy chụp màn hình gửi lại.', 'error');
                 return;
             }
             
