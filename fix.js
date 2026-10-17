@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * fix.js - Hệ thống v13.0 (Phục hồi Scheduler gốc + DOM Scraper cho React).
+ * fix.js - Hệ thống v14.0 (Tách biệt file Extractor & UI)
  */
 
 import fs from 'fs';
@@ -13,14 +13,115 @@ const GIT_USER_EMAIL = 'thanhngucomvn999@users.noreply.github.com';
 
 const FILES = {};
 
-// ------------------------------------------------------------
-// 1. dist/solver.user.js (Hệ thống v13.0)
-// ------------------------------------------------------------
+// ============================================================
+// 1. File Logic: src/extractor.js
+// ============================================================
+FILES['src/extractor.js'] = String.raw`/**
+ * Extractor Module - Chịu trách nhiệm lấy dữ liệu từ DOM của Onluyen.vn
+ */
+const Extractor = {
+    /**
+     * Sử dụng heuristic (tìm radio button và leo lên thẻ cha) để lấy toàn bộ text của câu hỏi.
+     * Dựa trên hệ thống mẫu bạn đã cung cấp.
+     */
+    getQuestionData() {
+        // 1. Tìm tất cả các nút radio (dấu hiệu của câu hỏi trắc nghiệm)
+        const radios = document.querySelectorAll('input[type="radio"], input[type="checkbox"]');
+        if (radios.length === 0) return null;
+
+        // Lấy thẻ cha chung bao bọc tất cả các nút radio (thường là thẻ div chứa câu hỏi)
+        let container = radios[0].parentElement;
+        while (container && container !== document.body) {
+            // Nếu thẻ cha này chứa hết các nút radio và có text dài
+            if (container.textContent.length > 50 && container.contains(radios[radios.length - 1])) {
+                break;
+            }
+            container = container.parentElement;
+        }
+
+        if (!container || container === document.body) return null;
+
+        // 2. Lấy toàn bộ text (bạo lực nhưng hiệu quả)
+        let rawText = container.innerText || container.textContent;
+        
+        // 3. Dọn dẹp rác
+        rawText = rawText
+            .replace(/Câu:\s*\d+/gi, '')
+            .replace(/#\d+/g, '')
+            .replace(/Báo lỗi/gi, '')
+            .replace(/\n+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        // 4. Trích xuất các đáp án bằng Regex (Dựa vào chuỗi A...B...C...D...)
+        // Ví dụ: A33,4665 lítB24,79 lítC17,92 lít.D33,60 lít
+        const options = [];
+        const optionRegex = /([A-D])\s*([^A-D]+)(?=[A-D]|$)/g;
+        let match;
+        while ((match = optionRegex.exec(rawText)) !== null) {
+            options.push({
+                letter: match[1],
+                text: match[0].trim()
+            });
+        }
+
+        // Nếu Regex không tìm thấy, trả về toàn bộ text làm câu hỏi
+        let questionText = rawText;
+        if (options.length > 0) {
+            // Xóa phần đáp án khỏi câu hỏi
+            options.forEach(opt => {
+                questionText = questionText.replace(opt.text, '');
+            });
+            questionText = questionText.trim();
+        }
+
+        return { 
+            questionText: questionText || rawText, 
+            rawText: rawText,
+            options: options.length > 0 ? options : null,
+            radios: radios
+        };
+    },
+
+    /**
+     * Click vào đáp án dựa trên chữ cái (A, B, C, D)
+     */
+    clickAnswer(letter, radios) {
+        const index = letter.toUpperCase().charCodeAt(0) - 65; // A -> 0, B -> 1...
+        if (radios && radios[index]) {
+            radios[index].click();
+            return true;
+        }
+        return false;
+    },
+
+    /**
+     * Click nút chuyển câu
+     */
+    clickNext() {
+        const buttons = document.querySelectorAll('button, div[role="button"]');
+        for (let b of buttons) {
+            const t = b.innerText?.trim().toUpperCase();
+            if (['BỎ QUA', 'TIẾP THEO', 'CÂU TIẾP', 'TIẾP'].includes(t)) {
+                b.click();
+                return true;
+            }
+        }
+        return false;
+    }
+};
+
+export default Extractor;
+`;
+
+// ============================================================
+// 2. File Giao diện: dist/solver.user.js
+// ============================================================
 FILES['dist/solver.user.js'] = String.raw`// ==UserScript==
-// @name         Intelligent AI Homework Solver (ONLUYEN_BOT Edition)
+// @name         Onluyen Auto Solver (v14.0)
 // @namespace    https://github.com/thanhngucomvn999/ONLUYEN_BOT
-// @version      13.0.0
-// @description  Tự động giải bài tập ONLUYEN (Original Logic + Robust DOM Scraper)
+// @version      14.0.0
+// @description  Tự động giải bài tập (Tách biệt Extractor)
 // @match        https://*.onluyen.vn/*
 // @grant        none
 // @run-at       document-idle
@@ -32,203 +133,135 @@ FILES['dist/solver.user.js'] = String.raw`// ==UserScript==
     const CONFIG = {
         GATEWAY: localStorage.getItem('HW_GATEWAY') || 'pollinations',
         API_KEY: localStorage.getItem('HW_API_KEY') || '',
-        LOOP_INTERVAL_MS: 4000, // Thời gian chờ giữa các câu (giống bản gốc)
-        HUMAN_DELAY_MIN: 500,   // Delay click để giống người thật
-        HUMAN_DELAY_MAX: 1500
+        DELAY: 2500
     };
 
-    const logger = {
-        info: (...a) => console.log('[HW-Solver]', ...a),
-        error: (...a) => console.error('[HW-Solver]', ...a)
-    };
-
-    // Hàm delay ngẫu nhiên (Giống bản gốc)
-    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-    const humanDelay = () => sleep(Math.floor(Math.random() * (CONFIG.HUMAN_DELAY_MAX - CONFIG.HUMAN_DELAY_MIN + 1)) + CONFIG.HUMAN_DELAY_MIN);
-
     // ============================================================
-    // 1. API CLIENT (Lấy logic từ bản gốc)
+    // [NHÚNG LOGIC EXTRACTOR VÀO ĐÂY]
     // ============================================================
-    const ApiClient = {
-        async callAI(questionText, choicesText) {
-            const prompt = "Bạn là chuyên gia giải bài tập. Hãy đọc câu hỏi và chọn đáp án đúng nhất.\n"
-                         + "Câu hỏi: " + questionText + "\n"
-                         + "Các đáp án:\n" + choicesText + "\n"
-                         + "YÊU CẦU: Chỉ trả về 1 chữ cái duy nhất (A, B, C hoặc D). Không giải thích.";
-            
-            let url, options;
-            if (CONFIG.GATEWAY === 'openai') {
-                url = 'https://api.openai.com/v1/chat/completions';
-                options = {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + CONFIG.API_KEY },
-                    body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'user', content: prompt }], temperature: 0 })
-                };
-            } else {
-                url = 'https://gen.pollinations.ai/v1/chat/completions';
-                options = {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ model: 'gemini', messages: [{ role: 'user', content: prompt }], temperature: 0 })
-                };
+    const Extractor = {
+        getQuestionData() {
+            const radios = document.querySelectorAll('input[type="radio"], input[type="checkbox"]');
+            if (radios.length === 0) return null;
+
+            let container = radios[0].parentElement;
+            while (container && container !== document.body) {
+                if (container.textContent.length > 50 && container.contains(radios[radios.length - 1])) {
+                    break;
+                }
+                container = container.parentElement;
             }
 
-            const res = await fetch(url, options);
+            if (!container || container === document.body) return null;
+
+            let rawText = container.innerText || container.textContent;
+            rawText = rawText.replace(/Câu:\s*\d+/gi, '').replace(/#\d+/g, '').replace(/Báo lỗi/gi, '').replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
+
+            const options = [];
+            const optionRegex = /([A-D])\s*([^A-D]+)(?=[A-D]|$)/g;
+            let match;
+            while ((match = optionRegex.exec(rawText)) !== null) {
+                options.push({ letter: match[1], text: match[0].trim() });
+            }
+
+            let questionText = rawText;
+            if (options.length > 0) {
+                options.forEach(opt => { questionText = questionText.replace(opt.text, ''); });
+                questionText = questionText.trim();
+            }
+
+            return { questionText: questionText || rawText, options: options.length > 0 ? options : null, radios: radios };
+        },
+        clickAnswer(letter, radios) {
+            const index = letter.toUpperCase().charCodeAt(0) - 65;
+            if (radios && radios[index]) {
+                radios[index].click();
+                return true;
+            }
+            return false;
+        },
+        clickNext() {
+            const buttons = document.querySelectorAll('button, div[role="button"]');
+            for (let b of buttons) {
+                const t = b.innerText?.trim().toUpperCase();
+                if (['BỎ QUA', 'TIẾP THEO', 'CÂU TIẾP', 'TIẾP'].includes(t)) {
+                    b.click();
+                    return true;
+                }
+            }
+            return false;
+        }
+    };
+
+    // ============================================================
+    // [API CLIENT]
+    // ============================================================
+    const ApiClient = {
+        async askAI(questionText, options) {
+            let prompt = "Bạn là chuyên gia giải bài tập. Đây là câu hỏi:\n" + questionText + "\n";
+            if (options && options.length > 0) {
+                prompt += "Các đáp án:\n" + options.map(o => o.text).join('\n') + "\n";
+            }
+            prompt += "YÊU CẦU: Chỉ trả về 1 chữ cái duy nhất (A, B, C hoặc D). Không giải thích.";
+
+            let url = CONFIG.GATEWAY === 'openai' ? 'https://api.openai.com/v1/chat/completions' : 'https://gen.pollinations.ai/v1/chat/completions';
+            let headers = { 'Content-Type': 'application/json' };
+            if (CONFIG.GATEWAY === 'openai') headers['Authorization'] = 'Bearer ' + CONFIG.API_KEY;
+
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: headers,
+                body: JSON.stringify({
+                    model: CONFIG.GATEWAY === 'openai' ? 'gpt-4o-mini' : 'gemini',
+                    messages: [{ role: 'user', content: prompt }],
+                    temperature: 0
+                })
+            });
             if (!res.ok) throw new Error('HTTP ' + res.status);
             const json = await res.json();
             const text = json?.choices?.[0]?.message?.content?.trim() || '';
-            
             const match = text.match(/\b([A-D])\b/i) || text.match(/^([A-D])/i);
             return match ? match[0].toUpperCase() : 'A';
         }
     };
 
     // ============================================================
-    // 2. SCRAPER (Thuật toán tìm khối đáp án qua giao diện)
-    // ============================================================
-    const Scraper = {
-        getExamContext() {
-            let nextBtn = null;
-            // 1. Tìm nút "BỎ QUA" hoặc "TIẾP"
-            const buttons = document.querySelectorAll('button, div[role="button"], a, span');
-            for (let b of buttons) {
-                const t = b.innerText?.trim().toUpperCase();
-                if (['BỎ QUA', 'TIẾP THEO', 'CÂU TIẾP', 'TIẾP', 'NỘP BÀI'].includes(t)) {
-                    nextBtn = b;
-                    break;
-                }
-            }
-
-            // 2. Tìm các lựa chọn A, B, C, D
-            // Dựa vào ảnh: Các chữ cái nằm trong 1 ô vuông nhỏ, text đáp án nằm bên cạnh
-            let choices = [];
-            const elements = Array.from(document.querySelectorAll('div, span, label, p'));
-            
-            // Lọc các thẻ có text chính xác là A, B, C, D (ô vuông nhỏ)
-            const letterBoxes = elements.filter(el => {
-                const txt = el.innerText?.trim().toUpperCase();
-                return ['A', 'B', 'C', 'D'].includes(txt) && el.children.length === 0;
-            });
-
-            letterBoxes.forEach(box => {
-                const letter = box.innerText.trim().toUpperCase();
-                if (choices.some(c => c.letter === letter)) return; // Bỏ qua nếu đã tìm thấy
-
-                // Đi lên thẻ cha (VD: thẻ div bao bọc cả ô vuông A và nội dung đáp án)
-                let row = box.parentElement;
-                let text = '';
-                
-                // Thường thẻ cha sẽ chứa cả chữ A và nội dung
-                while(row && row !== document.body) {
-                    const rowText = row.innerText?.trim();
-                    // Nếu text dài hơn chữ cái (tức là đã gom được nội dung đáp án)
-                    if (rowText.length > letter.length + 2 && rowText.includes(letter)) {
-                        text = rowText;
-                        break;
-                    }
-                    row = row.parentElement;
-                }
-
-                if (text) {
-                    choices.push({ letter: letter, element: row, text: text });
-                }
-            });
-
-            choices.sort((a, b) => a.letter.localeCompare(b.letter));
-            if (choices.length < 2) return null;
-
-            // 3. Tìm câu hỏi (Lấy text phía trên đáp án A)
-            let questionText = "";
-            let parent = choices[0].element.parentElement;
-            while (parent && parent !== document.body) {
-                const rawText = parent.innerText;
-                // Nếu thẻ cha chứa nội dung đáp án A, phần trước nó là câu hỏi
-                if (rawText.includes(choices[0].text)) {
-                    let splitText = rawText.split(choices[0].text)[0];
-                    // Dọn dẹp
-                    splitText = splitText
-                        .replace(/Câu\s+\d+.*/i, '')
-                        .replace(/#\d+/g, '')
-                        .replace(/Báo lỗi/gi, '')
-                        .replace(/\n{2,}/g, '\n')
-                        .trim();
-                    if (splitText.length > 10) {
-                        questionText = splitText;
-                        break;
-                    }
-                }
-                parent = parent.parentElement;
-            }
-
-            return { questionText, choices, nextBtn };
-        },
-
-        // Logic click giống bản gốc
-        async clickChoice(letter) {
-            const context = this.getExamContext();
-            if (!context) return false;
-            
-            const target = context.choices.find(c => c.letter === letter);
-            if (target) {
-                await humanDelay();
-                const radio = target.element.querySelector('input[type="radio"]');
-                if (radio) {
-                    radio.click();
-                } else {
-                    target.element.click();
-                }
-                return true;
-            }
-            return false;
-        },
-
-        async clickNext() {
-            const context = this.getExamContext();
-            if (context && context.nextBtn) {
-                await humanDelay();
-                context.nextBtn.click();
-                return true;
-            }
-            return false;
-        }
-    };
-
-    // ============================================================
-    // 3. SOLVER SCHEDULER (Lấy logic vòng lặp từ bản gốc)
+    // [SOLVER LOOP]
     // ============================================================
     const Solver = {
         isRunning: false,
-        intervalId: null,
-        lastQuestion: '', // Tránh giải lại 1 câu
+        timer: null,
 
         async solveOnce(updateStatus) {
             try {
-                const context = Scraper.getExamContext();
-                if (!context || !context.questionText) {
+                updateStatus('⏳ Đang quét DOM...');
+                const data = Extractor.getQuestionData();
+
+                if (!data) {
                     updateStatus('❌ Không tìm thấy câu hỏi!', 'error');
                     return false;
                 }
 
-                // Nếu câu hỏi này đã giải rồi (đang chờ chuyển trang) thì bỏ qua
-                if (this.lastQuestion === context.questionText) {
-                    return false;
+                updateStatus('🧠 AI đang giải...');
+                const answerLetter = await ApiClient.askAI(data.questionText, data.options);
+                
+                updateStatus('🖱 Chọn đáp án ' + answerLetter + '...');
+                const success = Extractor.clickAnswer(answerLetter, data.radios);
+                
+                if (success) {
+                    updateStatus('✅ Đã chọn ' + answerLetter, 'success');
+                } else {
+                    updateStatus('⚠️ Lỗi click!', 'error');
                 }
 
-                updateStatus('🧠 AI đang giải...');
-                const choicesStr = context.choices.map(c => c.text).join('\n');
-                const answerLetter = await ApiClient.callAI(context.questionText, choicesStr);
-                
-                updateStatus('🖱 Chọn ' + answerLetter + '...');
-                await Scraper.clickChoice(answerLetter);
-                
-                this.lastQuestion = context.questionText; // Đánh dấu đã giải
-                updateStatus('✅ Đã chọn ' + answerLetter, 'success');
-
-                // Đợi 1 chút rồi chuyển câu
-                setTimeout(async () => {
-                    await Scraper.clickNext();
-                    this.lastQuestion = ''; // Reset để giải câu tiếp theo
-                }, 1500);
+                setTimeout(() => {
+                    if (Extractor.clickNext()) {
+                        updateStatus('➡️ Đã chuyển câu...');
+                    } else {
+                        updateStatus('🏁 Đã hết câu hỏi.', 'success');
+                        this.stop();
+                    }
+                }, CONFIG.DELAY);
                 
                 return true;
             } catch (e) {
@@ -240,26 +273,25 @@ FILES['dist/solver.user.js'] = String.raw`// ==UserScript==
         start(updateStatus) {
             if (this.isRunning) return;
             this.isRunning = true;
-            this.lastQuestion = '';
-            
-            updateStatus('▶ Bắt đầu Auto Scheduler...');
-            
-            // Vòng lặp giống hệt bản gốc (Scheduler)
-            this.intervalId = setInterval(async () => {
+            const loop = async () => {
                 if (!this.isRunning) return;
-                await this.solveOnce(updateStatus);
-            }, CONFIG.LOOP_INTERVAL_MS);
+                const success = await this.solveOnce(updateStatus);
+                if (success && this.isRunning) {
+                    this.timer = setTimeout(loop, 3000);
+                }
+            };
+            loop();
         },
 
         stop(updateStatus) {
             this.isRunning = false;
-            clearInterval(this.intervalId);
+            clearTimeout(this.timer);
             if (updateStatus) updateStatus('⏹ Đã dừng.');
         }
     };
 
     // ============================================================
-    // 4. UI DASHBOARD
+    // [UI DASHBOARD]
     // ============================================================
     function createUI() {
         if (document.getElementById('hw-solver-overlay')) return;
@@ -269,11 +301,11 @@ FILES['dist/solver.user.js'] = String.raw`// ==UserScript==
         panel.style.cssText = 'position:fixed; bottom:20px; right:20px; width:330px; background:#2c3e50; color:white; border-radius:8px; box-shadow:0 5px 20px rgba(0,0,0,0.4); font-family:sans-serif; z-index:999999; overflow:hidden;';
         
         panel.innerHTML = [
-            '<div style="padding:10px; background:#34495e; font-weight:bold; cursor:move; user-select:none;" id="hw-drag">🤖 AI Solver v13.0</div>',
+            '<div style="padding:10px; background:#34495e; font-weight:bold; cursor:move; user-select:none;" id="hw-drag">🤖 AI Solver v14.0</div>',
             '<div style="padding:15px;">',
             '    <div id="hw-status" style="font-size:13px; margin-bottom:10px; padding:8px; background:rgba(0,0,0,0.2); border-left:4px solid #3498db; word-wrap:break-word;">Status: Ready</div>',
             '    <button id="hw-start" style="width:100%; padding:10px; margin-bottom:8px; background:#27ae60; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:bold;">▶ Start Auto</button>',
-            '    <button id="hw-test" style="width:100%; padding:10px; margin-bottom:8px; background:#2980b9; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:bold;">🔍 Test Scraper</button>',
+            '    <button id="hw-test" style="width:100%; padding:10px; margin-bottom:8px; background:#2980b9; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:bold;">🔍 Test Extractor</button>',
             '    <button id="hw-stop" style="width:100%; padding:10px; margin-bottom:15px; background:#c0392b; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:bold;">⏹ Stop</button>',
             '    <div style="font-size:11px; margin-bottom:5px;">Gateway API:</div>',
             '    <select id="hw-gw" style="width:100%; padding:8px; margin-bottom:10px; border-radius:4px; border:none;">',
@@ -307,21 +339,28 @@ FILES['dist/solver.user.js'] = String.raw`// ==UserScript==
             updateStatus('✅ Đã lưu cài đặt!', 'success');
         };
 
-        document.getElementById('hw-start').onclick = () => Solver.start(updateStatus);
-        document.getElementById('hw-stop').onclick = () => Solver.stop(updateStatus);
+        document.getElementById('hw-start').onclick = () => {
+            updateStatus('▶ Bắt đầu chạy Auto...');
+            Solver.start(updateStatus);
+        };
+
+        document.getElementById('hw-stop').onclick = () => {
+            Solver.stop(updateStatus);
+        };
 
         document.getElementById('hw-test').onclick = () => {
             updateStatus('⏳ Đang quét thử...');
-            const context = Scraper.getExamContext();
+            const data = Extractor.getQuestionData();
             
-            if (!context) {
-                updateStatus('❌ Không đọc được đề!', 'error');
+            if (!data) {
+                updateStatus('❌ Không tìm thấy dữ liệu!', 'error');
                 return;
             }
             
             let msg = '✅ ĐỌC THÀNH CÔNG!\n';
-            msg += 'Câu hỏi: ' + context.questionText.substring(0, 40) + '...\n';
-            msg += 'Đáp án: ' + context.choices.map(c => c.letter).join(', ');
+            msg += 'Text: ' + data.questionText.substring(0, 50) + '...\n';
+            msg += 'Số đáp án tìm thấy: ' + (data.options ? data.options.length : 0) + '\n';
+            msg += 'Số nút Radio: ' + data.radios.length;
             
             statusEl.innerText = msg;
             statusEl.style.whiteSpace = 'pre-wrap';
@@ -383,15 +422,15 @@ try {
     exec('git add -A');
     exec(`git config user.name "${GIT_USER_NAME}"`);
     exec(`git config user.email "${GIT_USER_EMAIL}"`);
-    exec('git commit -m "feat: v13.0 Restored original Scheduler logic + Visual DOM Scraper"');
+    exec('git commit -m "feat: v14.0 Separated Extractor logic into src/extractor.js"');
     
     try { execSync('git remote remove origin', { stdio: 'ignore' }); } catch (e) { }
     
     exec(`git remote add origin ${REPO_URL}`);
     exec('git push -u origin main -f');
     
-    console.log('\n✅ THÀNH CÔNG! Đã nâng cấp lên v13.0.');
-    console.log('👉 Hãy F5 trang web và bấm Test Scraper để kiểm tra.');
+    console.log('\n✅ THÀNH CÔNG! Đã tách file logic (src/extractor.js) và cập nhật UI.');
+    console.log('👉 F5 trang web và bấm "Test Extractor" để kiểm tra.');
 } catch (e) {
     console.log('\n⚠️ Lỗi push, kiểm tra đăng nhập Git.');
 }
