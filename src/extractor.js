@@ -1,85 +1,99 @@
 /**
- * Extractor Module - Chịu trách nhiệm lấy dữ liệu từ DOM của Onluyen.vn
+ * Extractor Module - Nhận diện loại câu hỏi và lấy dữ liệu.
  */
 const Extractor = {
-    /**
-     * Sử dụng heuristic (tìm radio button và leo lên thẻ cha) để lấy toàn bộ text của câu hỏi.
-     * Dựa trên hệ thống mẫu bạn đã cung cấp.
-     */
     getQuestionData() {
-        // 1. Tìm tất cả các nút radio (dấu hiệu của câu hỏi trắc nghiệm)
-        const radios = document.querySelectorAll('input[type="radio"], input[type="checkbox"]');
-        if (radios.length === 0) return null;
+        // 1. Kiểm tra loại câu hỏi
+        let radios = Array.from(document.querySelectorAll('input[type="radio"]'));
+        // Lọc các ô text hiển thị (loại bỏ ô search ẩn)
+        let textInputs = Array.from(document.querySelectorAll('input[type="text"], textarea'))
+            .filter(el => !el.classList.contains('search-input') && el.offsetParent !== null);
+        
+        let type = 'unknown';
+        let container = null;
+        let targetNode = null;
 
-        // Lấy thẻ cha chung bao bọc tất cả các nút radio (thường là thẻ div chứa câu hỏi)
-        let container = radios[0].parentElement;
+        if (radios.length > 0) {
+            type = 'multiple_choice';
+            container = radios[0].parentElement;
+            targetNode = radios[radios.length - 1];
+        } else if (textInputs.length > 0) {
+            type = 'short_answer';
+            container = textInputs[0].parentElement;
+            targetNode = textInputs[0];
+        }
+
+        if (!container) return null;
+
+        // Tìm thẻ cha chung bao bọc toàn bộ câu hỏi
         while (container && container !== document.body) {
-            // Nếu thẻ cha này chứa hết các nút radio và có text dài
-            if (container.textContent.length > 50 && container.contains(radios[radios.length - 1])) {
+            if (container.contains(targetNode) && container.textContent.length > 50) {
                 break;
             }
             container = container.parentElement;
         }
-
         if (!container || container === document.body) return null;
 
-        // 2. Lấy toàn bộ text (bạo lực nhưng hiệu quả)
+        let options = [];
         let rawText = container.innerText || container.textContent;
-        
-        // 3. Dọn dẹp rác
-        rawText = rawText
-            .replace(/Câu:\s*\d+/gi, '')
-            .replace(/#\d+/g, '')
-            .replace(/Báo lỗi/gi, '')
+        rawText = rawText.replace(/Câu:\s*\d+/gi, '').replace(/#\d+/g, '').replace(/Báo lỗi/gi, '');
+
+        // Xử lý riêng cho trắc nghiệm
+        if (type === 'multiple_choice') {
+            radios.forEach((radio, index) => {
+                const letter = String.fromCharCode(65 + index); // 0->A, 1->B
+                let label = radio.closest('label') || radio.parentElement;
+                if (label.innerText.length < 3) label = label.parentElement;
+                
+                // Sửa lỗi dùng dấu huyền (dùng nối chuỗi thay thế)
+                let text = label.innerText
+                    .replace(new RegExp('^' + letter + '[\\.\\s]*', 'i'), '')
+                    .replace(/Đáp án của bạn/gi, '')
+                    .trim();
+                    
+                options.push({ letter: letter, text: text || ('Đáp án ' + letter), element: label });
+            });
+        }
+
+        let questionText = rawText;
+        options.forEach(opt => { questionText = questionText.replace(opt.text, ''); });
+        questionText = questionText
+            .replace(/Đáp án của bạn/gi, '')
             .replace(/\n+/g, ' ')
             .replace(/\s+/g, ' ')
             .trim();
 
-        // 4. Trích xuất các đáp án bằng Regex (Dựa vào chuỗi A...B...C...D...)
-        // Ví dụ: A33,4665 lítB24,79 lítC17,92 lít.D33,60 lít
-        const options = [];
-        const optionRegex = /([A-D])\s*([^A-D]+)(?=[A-D]|$)/g;
-        let match;
-        while ((match = optionRegex.exec(rawText)) !== null) {
-            options.push({
-                letter: match[1],
-                text: match[0].trim()
-            });
-        }
-
-        // Nếu Regex không tìm thấy, trả về toàn bộ text làm câu hỏi
-        let questionText = rawText;
-        if (options.length > 0) {
-            // Xóa phần đáp án khỏi câu hỏi
-            options.forEach(opt => {
-                questionText = questionText.replace(opt.text, '');
-            });
-            questionText = questionText.trim();
-        }
-
         return { 
+            type: type, 
             questionText: questionText || rawText, 
-            rawText: rawText,
-            options: options.length > 0 ? options : null,
-            radios: radios
+            options: options, 
+            radios: radios,
+            textInputs: textInputs
         };
     },
 
-    /**
-     * Click vào đáp án dựa trên chữ cái (A, B, C, D)
-     */
-    clickAnswer(letter, radios) {
-        const index = letter.toUpperCase().charCodeAt(0) - 65; // A -> 0, B -> 1...
-        if (radios && radios[index]) {
-            radios[index].click();
+    clickAnswer(letter, dataOptions) {
+        const target = dataOptions.find(o => o.letter === letter);
+        if (target) {
+            const radio = target.element.querySelector('input[type="radio"]');
+            if (radio) radio.click(); else target.element.click();
             return true;
         }
         return false;
     },
 
-    /**
-     * Click nút chuyển câu
-     */
+    fillShortAnswer(answerText, textInputs) {
+        if (textInputs && textInputs.length > 0) {
+            let input = textInputs[0];
+            input.value = answerText;
+            // Giả lập gõ phím để React/Web nhận diện
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            return true;
+        }
+        return false;
+    },
+
     clickNext() {
         const buttons = document.querySelectorAll('button, div[role="button"]');
         for (let b of buttons) {
